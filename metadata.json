@@ -1,0 +1,9 @@
+{
+  "name": "Sacred Core Agency",
+  "description": "Cinematic Brand Intelligence & Marketing Automation Platform. DNA-reactive autonomous marketing assets.",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation",
+    "camera"
+  ]
+}
