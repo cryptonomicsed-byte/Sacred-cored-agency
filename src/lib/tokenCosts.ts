@@ -1,0 +1,23 @@
+export const TOKEN_COSTS = {
+  DNA_EXTRACTION: 50,
+  CAMPAIGN_GENERATION: 30,
+  PORTFOLIO_REPORT: 30,
+  AGENT_SPAWN: 20,
+  AGENT_MESSAGE: 10,
+  VOICE_GENERATION: 15,
+  JINGLE_GENERATION: 25,
+  WEBSITE_GENERATION: 40,
+  LEAD_SEARCH: 10,
+  LEAD_ANALYSIS: 15,
+  PITCH_GENERATION: 20,
+  URL_SCRAPE: 5,
+} as const;
+
+export type TokenAction = keyof typeof TOKEN_COSTS;
+
+export const STARTER_TOKENS = 500;
+export const TIER_TOKENS = {
+  free: 500,
+  pro: 2000,
+  agency: 10000,
+};

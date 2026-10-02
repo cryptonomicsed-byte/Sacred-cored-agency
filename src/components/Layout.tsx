@@ -2,6 +2,7 @@
 import React from 'react';
 import { useLocation } from 'react-router-dom';
 import { ToastContainer } from './ToastContainer';
+import { TokenExhaustBanner } from './ui/TokenExhaustBanner';
 import { useStore } from '../store';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
@@ -42,7 +43,8 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         {children}
       </main>
 
-      {/* Custom Cursor or other global elements could go here */}
+      {/* Token Exhaustion Banner */}
+      {!isPublicRoute && isAuthenticated && <TokenExhaustBanner />}
     </div>
   );
 };

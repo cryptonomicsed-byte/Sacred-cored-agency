@@ -187,12 +187,14 @@ const SettingsPage = () => {
   }, [searchParams, addTokens]);
 
   const handleBuyTokens = async (packageId: string) => {
+    // TODO: Stripe integration post-launch
+    // Payments will be added when ready
     setIsBuying(true);
     try {
       const response = await fetch('/api/billing/create-checkout-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ packageId, userId: 'user_123' }), // In real app, get from auth
+        body: JSON.stringify({ packageId, userId: 'user_123' }),
       });
       const data = await response.json();
       if (data.url) {

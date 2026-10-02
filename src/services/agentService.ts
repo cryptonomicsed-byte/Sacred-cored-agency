@@ -25,7 +25,8 @@ export const chatWithAgent = async (agent: Agent, history: AgentMessage[], userM
     return await universalAiService.generateText({
       prompt: userMessage,
       systemInstruction: systemPrompt,
-      featureId: 'agent-chat'
+      featureId: 'agent-chat',
+      tokenAction: 'AGENT_MESSAGE'
     });
   } catch (e) {
     console.error("Agent chat error", e);

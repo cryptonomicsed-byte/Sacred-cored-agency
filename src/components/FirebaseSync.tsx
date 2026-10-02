@@ -3,6 +3,8 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { doc, collection, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { useStore } from '../store';
+import { useTokenStore } from '../store/tokenStore';
+import { STARTER_TOKENS } from '../lib/tokenCosts';
 import { BrandDNA, Campaign, LeadProfile, VideoJob, Agent } from '../types';
 
 export const FirebaseSync = () => {
@@ -11,6 +13,11 @@ export const FirebaseSync = () => {
   // 1. Auth Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
+      // Demo/guest mode: never let Firebase override a local demo session.
+      if (useStore.getState().isDemo) {
+        setAuthReady(true);
+        return;
+      }
       if (user) {
         setAuth(user.uid);
       } else {
@@ -23,6 +30,7 @@ export const FirebaseSync = () => {
 
   // 2. Firestore Listeners
   useEffect(() => {
+    if (useStore.getState().isDemo) return;
     if (!userId) return;
 
     // --- User Document (tokens, tier, etc.) ---
@@ -30,19 +38,26 @@ export const FirebaseSync = () => {
     const unsubUser = onSnapshot(userDocRef, async (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.data();
-        useStore.setState({ 
-          tokens: data.tokens ?? 0, 
-          userTier: data.userTier ?? 'free',
+        const tokens = data.tokens ?? 0;
+        const tier = data.userTier ?? 'free';
+        useStore.setState({
+          tokens,
+          userTier: tier,
           customGeminiKey: data.customGeminiKey ?? ''
         });
+        // Sync to dedicated token store
+        useTokenStore.getState().setBalance(tokens);
+        useTokenStore.getState().setTier(tier === 'hunter' ? 'free' : tier);
       } else {
         // Initialize user doc if it doesn't exist
         try {
           await setDoc(userDocRef, {
-            tokens: 500,
-            userTier: 'pro',
+            tokens: STARTER_TOKENS,
+            userTier: 'free',
             customGeminiKey: ''
           });
+          useTokenStore.getState().setBalance(STARTER_TOKENS);
+          useTokenStore.getState().setTier('free');
         } catch (e) {
           handleFirestoreError(e, OperationType.WRITE, `users/${userId}`);
         }

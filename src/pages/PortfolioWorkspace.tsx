@@ -2,16 +2,20 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '../store';
-import { 
-  ChevronLeft, 
-  Dna, 
-  FileText, 
-  Zap, 
-  Cpu, 
-  Music, 
-  Globe, 
-  Sparkles, 
-  RefreshCw, 
+import { useTokenStore } from '../store/tokenStore';
+import { TOKEN_COSTS } from '../lib/tokenCosts';
+import { TokenGate } from '../components/ui/TokenGate';
+import { auth } from '../firebase';
+import {
+  ChevronLeft,
+  Dna,
+  FileText,
+  Zap,
+  Cpu,
+  Music,
+  Globe,
+  Sparkles,
+  RefreshCw,
   ChevronRight,
   Play,
   Pause,
@@ -20,7 +24,9 @@ import {
   Terminal,
   MessageSquare,
   Send,
-  Plus
+  Plus,
+  Mic,
+  Download
 } from 'lucide-react';
 import { SonicWaveform } from '../components/SonicWaveform';
 
@@ -367,89 +373,350 @@ const AgentForgeSection = ({ brand }: any) => {
   );
 };
 
-const SonicLabSection = ({ brand }: any) => {
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isSynthesizing, setIsSynthesizing] = useState(false);
-  const [prompt, setPrompt] = useState('');
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+const VOICE_PHRASES = [
+  'Warming up voice model...',
+  'Synthesising audio...',
+  'Finalising track...',
+];
+const JINGLE_PHRASES = [
+  'Composing with Lyria 3...',
+  'Building sonic identity...',
+  'Rendering 48kHz stereo...',
+];
 
-  const synthesizeAudio = async () => {
-    if (!prompt.trim()) return;
-    setIsSynthesizing(true);
+const SonicLabSection = ({ brand }: any) => {
+  const [mode, setMode] = useState<'voice' | 'jingle'>('voice');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [statusPhrase, setStatusPhrase] = useState('');
+  const [audioBase64, setAudioBase64] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Voice state
+  const [voiceText, setVoiceText] = useState('');
+  const [voices, setVoices] = useState<{ voice_id: string; name: string }[]>([]);
+  const [selectedVoice, setSelectedVoice] = useState('21m00Tcm4TlvDq8ikWAM');
+
+  // Jingle state
+  const [jinglePrompt, setJinglePrompt] = useState('');
+  const [jingleType, setJingleType] = useState<'clip' | 'pro'>('clip');
+
+  const phraseInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Load voices on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const user = auth.currentUser;
+        if (!user) return;
+        const idToken = await user.getIdToken();
+        const res = await fetch('/api/audio/voices', {
+          headers: { 'Authorization': `Bearer ${idToken}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.voices?.length) setVoices(data.voices);
+        }
+      } catch {
+        // Silently fail — voices will show default
+      }
+    })();
+  }, []);
+
+  const startStatusCycle = (phrases: string[]) => {
+    let idx = 0;
+    setStatusPhrase(phrases[0]);
+    phraseInterval.current = setInterval(() => {
+      idx = (idx + 1) % phrases.length;
+      setStatusPhrase(phrases[idx]);
+    }, 2500);
+  };
+
+  const stopStatusCycle = () => {
+    if (phraseInterval.current) clearInterval(phraseInterval.current);
+    phraseInterval.current = null;
+    setStatusPhrase('');
+  };
+
+  const handleGenerateVoice = async () => {
+    if (!voiceText.trim()) return;
+    setIsGenerating(true);
+    setError(null);
+    setAudioBase64(null);
+    startStatusCycle(VOICE_PHRASES);
+
     try {
-      // In a real app, we'd call the Gemini API here.
-      // For this demo, we'll simulate the synthesis.
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      alert("Audio synthesized successfully. (Simulation)");
-    } catch (error) {
-      console.error(error);
+      const user = auth.currentUser;
+      if (!user) throw new Error('Not authenticated');
+      const idToken = await user.getIdToken();
+
+      const res = await fetch('/api/audio/voice', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ text: voiceText, voiceId: selectedVoice }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Voice generation failed (${res.status})`);
+      }
+
+      const data = await res.json();
+      setAudioBase64(data.audio);
+
+      if (data.tokensRemaining !== undefined) {
+        useTokenStore.getState().setBalance(data.tokensRemaining);
+        useStore.setState({ tokens: data.tokensRemaining });
+      }
+    } catch (e: any) {
+      setError(e.message);
     } finally {
-      setIsSynthesizing(false);
+      setIsGenerating(false);
+      stopStatusCycle();
     }
   };
 
+  const handleGenerateJingle = async () => {
+    if (!jinglePrompt.trim()) return;
+    setIsGenerating(true);
+    setError(null);
+    setAudioBase64(null);
+    startStatusCycle(JINGLE_PHRASES);
+
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error('Not authenticated');
+      const idToken = await user.getIdToken();
+
+      const res = await fetch('/api/audio/jingle', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          prompt: jinglePrompt,
+          companyName: brand.name,
+          tone: brand.tone?.personality,
+          type: jingleType,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Jingle generation failed (${res.status})`);
+      }
+
+      const data = await res.json();
+      setAudioBase64(data.audio);
+
+      if (data.tokensRemaining !== undefined) {
+        useTokenStore.getState().setBalance(data.tokensRemaining);
+        useStore.setState({ tokens: data.tokensRemaining });
+      }
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setIsGenerating(false);
+      stopStatusCycle();
+    }
+  };
+
+  const handleDownload = () => {
+    if (!audioBase64) return;
+    const link = document.createElement('a');
+    link.href = `data:audio/mpeg;base64,${audioBase64}`;
+    link.download = mode === 'voice' ? 'voice-output.mp3' : 'jingle-output.mp3';
+    link.click();
+  };
+
   return (
-    <div className="h-[70vh] glass-card rounded-[2.5rem] relative overflow-hidden flex flex-col">
+    <div className="min-h-[70vh] glass-card rounded-[2.5rem] relative overflow-hidden flex flex-col">
       <div className="absolute inset-0 z-0">
         <SonicWaveform />
       </div>
 
-      <div className="relative z-10 p-12 flex flex-col h-full">
-        <div className="flex items-center justify-between mb-auto">
+      <div className="relative z-10 p-12 flex flex-col h-full gap-10">
+        {/* Header */}
+        <div className="flex items-center justify-between">
           <div>
             <h2 className="text-4xl font-display uppercase tracking-tight holographic-text mb-2">Sonic Lab</h2>
-            <p className="text-xs font-mono text-white/40 uppercase tracking-[0.3em]">Powered by Gemini Lyria 3</p>
+            <p className="text-xs font-mono text-white/40 uppercase tracking-[0.3em]">Lyria 3 + ElevenLabs</p>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="p-4 rounded-full bg-white/5 border border-white/10 backdrop-blur-md">
-              <Volume2 className="w-6 h-6 text-white/60" />
-            </div>
+          <div className="p-4 rounded-full bg-white/5 border border-white/10 backdrop-blur-md">
+            <Volume2 className="w-6 h-6 text-white/60" />
           </div>
         </div>
 
-        <div className="flex flex-col items-center justify-center space-y-12">
-          <div className="relative group cursor-pointer" onClick={() => setIsPlaying(!isPlaying)}>
-            <div className={`absolute inset-0 bg-brand-primary/20 blur-3xl rounded-full animate-pulse group-hover:bg-brand-primary/40 transition-all ${isPlaying ? 'scale-150 opacity-50' : ''}`} />
-            <div className="relative w-40 h-40 rounded-full bg-white/10 border border-white/20 backdrop-blur-xl flex items-center justify-center group-hover:scale-110 transition-all duration-500">
-              {isPlaying ? <Pause className="w-16 h-16" /> : <Play className="w-16 h-16 ml-2" />}
-            </div>
+        {/* Mode Toggle */}
+        <div className="flex justify-center">
+          <div className="flex bg-white/5 border border-white/10 rounded-full p-1">
+            <button
+              onClick={() => { setMode('voice'); setAudioBase64(null); setError(null); }}
+              className={`flex items-center gap-2 px-8 py-3 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all ${
+                mode === 'voice' ? 'bg-indigo-600 text-white shadow-lg' : 'text-white/40 hover:text-white'
+              }`}
+            >
+              <Mic className="w-3 h-3" /> Voice
+            </button>
+            <button
+              onClick={() => { setMode('jingle'); setAudioBase64(null); setError(null); }}
+              className={`flex items-center gap-2 px-8 py-3 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all ${
+                mode === 'jingle' ? 'bg-indigo-600 text-white shadow-lg' : 'text-white/40 hover:text-white'
+              }`}
+            >
+              <Music className="w-3 h-3" /> Jingle
+            </button>
           </div>
+        </div>
 
-          <div className="space-y-6 w-full max-w-xl text-center">
-            <h3 className="text-xl font-bold uppercase tracking-widest">Generate Brand Soundscape</h3>
-            <div className="flex gap-4">
-              <input 
-                type="text"
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="E.G. 'WARM AMBIENT JINGLE FROM LOGO COLORS'"
-                className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-6 py-4 text-xs font-mono focus:border-brand-primary outline-none"
+        {/* Forms */}
+        <div className="flex-1 flex flex-col items-center justify-center w-full max-w-2xl mx-auto space-y-8">
+          {mode === 'voice' ? (
+            <>
+              <div className="w-full space-y-4">
+                <div className="relative">
+                  <textarea
+                    value={voiceText}
+                    onChange={(e) => setVoiceText(e.target.value.slice(0, 500))}
+                    placeholder="Enter text or script to synthesize..."
+                    rows={4}
+                    className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 text-xs font-mono focus:border-indigo-500 outline-none resize-none"
+                  />
+                  <span className="absolute bottom-3 right-4 text-[9px] font-mono text-white/30">
+                    {voiceText.length}/500
+                  </span>
+                </div>
+
+                <select
+                  value={selectedVoice}
+                  onChange={(e) => setSelectedVoice(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-6 py-3 text-xs font-mono text-white focus:border-indigo-500 outline-none appearance-none"
+                >
+                  <option value="21m00Tcm4TlvDq8ikWAM">Rachel (Default)</option>
+                  {voices.map((v) => (
+                    <option key={v.voice_id} value={v.voice_id}>{v.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <TokenGate cost={TOKEN_COSTS.VOICE_GENERATION} action="VOICE_GENERATION">
+                <button
+                  onClick={handleGenerateVoice}
+                  disabled={isGenerating || !voiceText.trim()}
+                  className="w-full py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-bold uppercase text-xs tracking-[0.2em] transition-all disabled:opacity-50 flex items-center justify-center gap-3"
+                >
+                  <Mic className="w-4 h-4" />
+                  {isGenerating ? statusPhrase : 'Generate Voice'}
+                  <span className="text-[9px] text-indigo-300 ml-2">
+                    {TOKEN_COSTS.VOICE_GENERATION} tokens
+                  </span>
+                </button>
+              </TokenGate>
+            </>
+          ) : (
+            <>
+              <div className="w-full space-y-4">
+                <div className="relative">
+                  <textarea
+                    value={jinglePrompt}
+                    onChange={(e) => setJinglePrompt(e.target.value.slice(0, 500))}
+                    placeholder="Describe your brand jingle... e.g. 'Warm ambient intro with rising synths'"
+                    rows={4}
+                    className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 text-xs font-mono focus:border-indigo-500 outline-none resize-none"
+                  />
+                  <span className="absolute bottom-3 right-4 text-[9px] font-mono text-white/30">
+                    {jinglePrompt.length}/500
+                  </span>
+                </div>
+
+                {/* Duration toggle */}
+                <div className="flex justify-center">
+                  <div className="flex bg-white/5 border border-white/10 rounded-full p-1">
+                    <button
+                      onClick={() => setJingleType('clip')}
+                      className={`px-6 py-2 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all ${
+                        jingleType === 'clip' ? 'bg-white/10 text-white' : 'text-white/40'
+                      }`}
+                    >
+                      30s Clip
+                    </button>
+                    <button
+                      onClick={() => setJingleType('pro')}
+                      className={`px-6 py-2 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all ${
+                        jingleType === 'pro' ? 'bg-white/10 text-white' : 'text-white/40'
+                      }`}
+                    >
+                      Full Song
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <TokenGate cost={TOKEN_COSTS.JINGLE_GENERATION} action="JINGLE_GENERATION">
+                <button
+                  onClick={handleGenerateJingle}
+                  disabled={isGenerating || !jinglePrompt.trim()}
+                  className="w-full py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-bold uppercase text-xs tracking-[0.2em] transition-all disabled:opacity-50 flex items-center justify-center gap-3"
+                >
+                  <Music className="w-4 h-4" />
+                  {isGenerating ? statusPhrase : 'Generate Jingle'}
+                  <span className="text-[9px] text-indigo-300 ml-2">
+                    {TOKEN_COSTS.JINGLE_GENERATION} tokens
+                  </span>
+                </button>
+              </TokenGate>
+
+              <p className="text-[9px] font-mono text-white/20 uppercase tracking-widest">
+                Powered by Google Lyria 3
+              </p>
+            </>
+          )}
+
+          {/* Error */}
+          {error && (
+            <div className="w-full p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-xs font-mono text-center">
+              {error}
+            </div>
+          )}
+
+          {/* Result */}
+          {audioBase64 && (
+            <div className="w-full space-y-4 p-6 bg-white/5 border border-white/10 rounded-2xl">
+              <audio
+                controls
+                className="w-full"
+                src={`data:audio/mpeg;base64,${audioBase64}`}
               />
-              <button 
-                onClick={synthesizeAudio}
-                disabled={isSynthesizing}
-                className="px-8 py-4 bg-brand-primary text-black rounded-2xl font-bold uppercase text-[10px] tracking-widest hover:bg-white transition-all disabled:opacity-50"
+              <button
+                onClick={handleDownload}
+                className="flex items-center gap-2 mx-auto px-6 py-3 bg-white/10 hover:bg-white/20 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all"
               >
-                {isSynthesizing ? 'Synthesizing...' : 'Synthesize'}
+                <Download className="w-3 h-3" /> Download
               </button>
             </div>
-          </div>
+          )}
         </div>
 
-        <div className="mt-auto flex items-center justify-between pt-12">
+        {/* Footer */}
+        <div className="flex items-center justify-between pt-6">
           <div className="flex items-center gap-8">
             <div className="space-y-1">
               <p className="text-[8px] font-mono text-white/40 uppercase tracking-widest">Frequency</p>
-              <p className="text-sm font-bold">432 Hz</p>
+              <p className="text-sm font-bold">48 kHz</p>
             </div>
             <div className="space-y-1">
-              <p className="text-[8px] font-mono text-white/40 uppercase tracking-widest">Resonance</p>
-              <p className="text-sm font-bold">Harmonic</p>
+              <p className="text-[8px] font-mono text-white/40 uppercase tracking-widest">Format</p>
+              <p className="text-sm font-bold">Stereo MP3</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-brand-primary animate-ping" />
-            <p className="text-[10px] font-mono text-brand-primary uppercase tracking-widest">Lyria Engine Active</p>
+            <p className="text-[10px] font-mono text-brand-primary uppercase tracking-widest">
+              {mode === 'jingle' ? 'Lyria Engine' : 'ElevenLabs'} Active
+            </p>
           </div>
         </div>
       </div>

@@ -1,5 +1,6 @@
 
 import { universalAiService } from "./universalAiService";
+import { type TokenAction } from "../lib/tokenCosts";
 
 /**
  * Strategy Executor
@@ -7,18 +8,20 @@ import { universalAiService } from "./universalAiService";
  * Removed recursive phases to prevent token truncation.
  */
 export const executeRLMAnalysis = async (
-  prompt: string, 
-  onStep?: (step: string) => void
+  prompt: string,
+  onStep?: (step: string) => void,
+  tokenAction?: TokenAction
 ): Promise<string> => {
-  
+
   if (onStep) onStep("Synthesizing Single-Shot Intelligence...");
-  
+
   // Single pass synthesis for maximum reliability
   return await universalAiService.generateText({
-    prompt: `Act as a Senior Strategist. Complete the following task in a single, high-fidelity response. 
-    Ensure the JSON is complete and valid. 
+    prompt: `Act as a Senior Strategist. Complete the following task in a single, high-fidelity response.
+    Ensure the JSON is complete and valid.
     Task: ${prompt}`,
     responseMimeType: 'application/json',
-    featureId: 'direct-synthesis'
+    featureId: 'direct-synthesis',
+    tokenAction: tokenAction || 'CAMPAIGN_GENERATION'
   });
 };

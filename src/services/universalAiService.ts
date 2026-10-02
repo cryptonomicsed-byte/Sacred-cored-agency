@@ -1,7 +1,10 @@
 
 import { useStore } from "../store";
+import { useTokenStore } from "../store/tokenStore";
 import { neuralCache } from "./neuralCache";
 import { GoogleGenAI } from "@google/genai";
+import { TOKEN_COSTS, type TokenAction } from "../lib/tokenCosts";
+import { auth } from "../firebase";
 
 export interface TextGenerationParams {
   systemInstruction?: string;
@@ -12,6 +15,7 @@ export interface TextGenerationParams {
   bypassCache?: boolean;
   tools?: any[];
   modelOverride?: string;
+  tokenAction?: TokenAction;
 }
 
 export class AiServiceError extends Error {
@@ -56,7 +60,7 @@ const repairTruncatedJson = (json: string): string => {
   let repaired = json.trim();
   // If we're stuck inside a string, close it
   if (inString) repaired += '"';
-  
+
   // Close open brackets and braces in reverse order
   while (openBrackets > 0) {
     repaired += ']';
@@ -66,7 +70,7 @@ const repairTruncatedJson = (json: string): string => {
     repaired += '}';
     openBraces--;
   }
-  
+
   return repaired;
 };
 
@@ -75,13 +79,13 @@ const repairTruncatedJson = (json: string): string => {
  */
 const cleanJsonResponse = (text: string): string => {
   if (!text) return '{}';
-  
+
   // Remove markdown code blocks
   const cleaned = text.replace(/```json\n?|```\n?/gi, '').trim();
-  
+
   const firstBrace = cleaned.indexOf('{');
   const firstBracket = cleaned.indexOf('[');
-  
+
   let start = -1;
   if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
     start = firstBrace;
@@ -97,25 +101,77 @@ const cleanJsonResponse = (text: string): string => {
   return cleaned.startsWith('{') || cleaned.startsWith('[') ? repairTruncatedJson(cleaned) : '{}';
 };
 
+/**
+ * Get a Firebase Auth Bearer token for server requests.
+ */
+async function getAuthToken(): Promise<string | null> {
+  const user = auth.currentUser;
+  if (!user) return null;
+  return user.getIdToken();
+}
+
+/**
+ * Server-side token deduction. Returns new balance or throws.
+ */
+async function serverDeductTokens(amount: number, action: string): Promise<number> {
+  const idToken = await getAuthToken();
+  if (!idToken) throw new AiServiceError('Not authenticated', 'AUTH_ERROR');
+
+  const res = await fetch('/api/tokens/deduct', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ amount, action }),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 402) {
+      throw new AiServiceError(
+        `Insufficient tokens. ${data.required} required.`,
+        'INSUFFICIENT_TOKENS'
+      );
+    }
+    throw new AiServiceError(data.error || 'Token deduction failed');
+  }
+
+  const data = await res.json();
+  return data.tokensRemaining;
+}
+
 export const universalAiService = {
   async generateText(params: TextGenerationParams): Promise<string> {
-    const { providers, tokens, deductTokens, customGeminiKey } = useStore.getState();
+    const { providers, customGeminiKey } = useStore.getState();
+    const { balance, deductOptimistic, rollback } = useTokenStore.getState();
     const { activeLLM } = providers;
-    
+
+    const tokenAction = params.tokenAction || 'CAMPAIGN_GENERATION';
+    const cost = TOKEN_COSTS[tokenAction];
+
     if (!params.bypassCache) {
       const cached = neuralCache.get(params.prompt, { activeLLM, sys: params.systemInstruction });
       if (cached) return cached;
     }
 
-    // --- Direct Client-Side Inference ---
-    const apiKey = customGeminiKey || process.env.GEMINI_API_KEY;
-    
-    if (!apiKey) {
-      throw new AiServiceError("Gemini API key not found. Please provide a custom key in settings.", "AUTH_ERROR");
+    // --- Token Check ---
+    if (balance < cost) {
+      throw new AiServiceError(
+        `Insufficient tokens. ${cost} required for ${tokenAction}, you have ${balance}.`,
+        'INSUFFICIENT_TOKENS'
+      );
     }
 
-    if (tokens < 1) {
-      throw new AiServiceError("Insufficient tokens. Please top up.", "QUOTA_EXCEEDED");
+    // Optimistic deduction
+    deductOptimistic(cost);
+
+    // --- Direct Client-Side Inference ---
+    const apiKey = customGeminiKey || process.env.GEMINI_API_KEY;
+
+    if (!apiKey) {
+      rollback(cost);
+      throw new AiServiceError("Gemini API key not found. Please provide a custom key in settings.", "AUTH_ERROR");
     }
 
     try {
@@ -132,7 +188,7 @@ export const universalAiService = {
       });
 
       let processedResult = result.text || '';
-      
+
       if (params.responseMimeType === 'application/json') {
         processedResult = cleanJsonResponse(processedResult);
         try {
@@ -144,6 +200,7 @@ export const universalAiService = {
             JSON.parse(processedResult);
           } catch (e2) {
             console.error("[AI Service] JSON repair failed, returning raw text with fallback flag");
+            rollback(cost);
             return params.featureId ? "FALLBACK_TRIGGERED" : "{}";
           }
         }
@@ -153,10 +210,23 @@ export const universalAiService = {
         neuralCache.set(params.prompt, { activeLLM, sys: params.systemInstruction }, processedResult);
       }
 
-      deductTokens(1);
+      // Server-side deduction (authoritative)
+      try {
+        const newBalance = await serverDeductTokens(cost, tokenAction);
+        useTokenStore.getState().setBalance(newBalance);
+        useStore.setState({ tokens: newBalance });
+      } catch {
+        // Server deduct failed but AI call succeeded — keep optimistic state
+        console.warn('[AI Service] Server token deduction failed, keeping optimistic balance');
+      }
+
       return processedResult;
     } catch (error: any) {
+      // Rollback optimistic deduction on failure
+      rollback(cost);
+
       console.error("[AI Service] Generation error:", error);
+      if (error instanceof AiServiceError) throw error;
       const msg = error.message || String(error);
       const isQuota = /429|quota|limit|balance|insufficient|RESOURCE_EXHAUSTED/i.test(msg);
       if (isQuota && params.featureId) return "FALLBACK_TRIGGERED";
@@ -165,23 +235,31 @@ export const universalAiService = {
     }
   },
 
-  async generateImage(prompt: string): Promise<string> {
-    const { tokens, deductTokens, customGeminiKey } = useStore.getState();
-    
+  async generateImage(prompt: string, tokenAction: TokenAction = 'CAMPAIGN_GENERATION'): Promise<string> {
+    const { customGeminiKey } = useStore.getState();
+    const { balance, deductOptimistic, rollback } = useTokenStore.getState();
+
+    const cost = TOKEN_COSTS[tokenAction];
+
     const apiKey = customGeminiKey || process.env.GEMINI_API_KEY;
-    
+
     if (!apiKey) {
       throw new Error("Gemini API key not found. Please provide a custom key in settings.");
     }
 
-    if (tokens < 10) {
-      throw new Error("Insufficient tokens for image generation (10 tokens required).");
+    if (balance < cost) {
+      throw new AiServiceError(
+        `Insufficient tokens. ${cost} required for ${tokenAction}, you have ${balance}.`,
+        'INSUFFICIENT_TOKENS'
+      );
     }
+
+    deductOptimistic(cost);
 
     try {
       const ai = new GoogleGenAI({ apiKey });
-      const response = await ai.models.generateContent({ 
-        model: 'gemini-2.5-flash-image', 
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
         contents: { parts: [{ text: prompt }] },
         config: {
           imageConfig: {
@@ -200,14 +278,24 @@ export const universalAiService = {
           }
         }
       }
-      
+
       if (imageData) {
-        deductTokens(10);
+        // Server-side deduction
+        try {
+          const newBalance = await serverDeductTokens(cost, tokenAction);
+          useTokenStore.getState().setBalance(newBalance);
+          useStore.setState({ tokens: newBalance });
+        } catch {
+          console.warn('[AI Service] Server token deduction failed, keeping optimistic balance');
+        }
         return `data:${imageData.mimeType};base64,${imageData.data}`;
       }
-      
+
+      rollback(cost);
       throw new Error("No image data found in response");
     } catch (e: any) {
+      if (e instanceof AiServiceError) throw e;
+      rollback(cost);
       console.error("Image generation failed:", e);
       return "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1000&q=80";
     }

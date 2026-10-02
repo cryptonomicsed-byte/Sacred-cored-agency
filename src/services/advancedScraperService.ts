@@ -55,6 +55,7 @@ export const huntLeads = async (
       prompt,
       responseMimeType: 'application/json',
       featureId: 'lead-hunting',
+      tokenAction: 'LEAD_SEARCH',
       tools: [{ googleSearch: {} }] // Only recognized by Gemini but safe to pass to router
     });
 
@@ -103,7 +104,8 @@ export const generateCloserPortfolio = async (lead: LeadProfile): Promise<Closer
     const response = await universalAiService.generateText({
       prompt,
       responseMimeType: 'application/json',
-      featureId: 'closer-portfolio'
+      featureId: 'closer-portfolio',
+      tokenAction: 'PITCH_GENERATION'
     });
 
     if (response === "FALLBACK_TRIGGERED") throw new Error("Synthesis limit reached.");

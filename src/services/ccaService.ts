@@ -46,7 +46,7 @@ export const consultConfucius = async (
 
   try {
     // We leverage the RLM engine to think recursively about the wisdom
-    const rawWisdom = await executeRLMAnalysis(prompt);
+    const rawWisdom = await executeRLMAnalysis(prompt, undefined, 'AGENT_MESSAGE');
     const data = JSON.parse(rawWisdom);
 
     return {

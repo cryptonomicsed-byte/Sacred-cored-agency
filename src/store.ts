@@ -5,6 +5,7 @@ import { BrandDNA, Campaign, UserTier, VideoJob, Agent, LeadProfile, ProviderCon
 import { db, auth, handleFirestoreError, OperationType } from './firebase';
 import { signOut } from 'firebase/auth';
 import { doc, setDoc, updateDoc, deleteDoc, collection, addDoc } from 'firebase/firestore';
+import { useTokenStore } from './store/tokenStore';
 
 /**
  * Custom IndexedDB Storage for Zustand
@@ -57,6 +58,7 @@ interface AppState {
   isAuthenticated: boolean;
   userId: string | null;
   isAuthReady: boolean;
+  isDemo: boolean;
   currentBrand: BrandDNA | null;
   brands: BrandDNA[];
   campaigns: Campaign[];
@@ -74,6 +76,7 @@ interface AppState {
   
   setAuth: (userId: string | null) => void;
   setAuthReady: (ready: boolean) => void;
+  setDemo: (isDemo: boolean) => void;
   setBrand: (brand: BrandDNA) => void;
   addBrand: (brand: BrandDNA) => void;
   updateBrand: (id: string, updates: Partial<BrandDNA>) => void;
@@ -108,6 +111,7 @@ export const useStore = create<AppState>()(
       isAuthenticated: false,
       userId: null,
       isAuthReady: false,
+      isDemo: false,
       currentBrand: null,
       brands: [],
       campaigns: [],
@@ -130,6 +134,7 @@ export const useStore = create<AppState>()(
       
       setAuth: (userId) => set({ userId, isAuthenticated: !!userId }),
       setAuthReady: (ready) => set({ isAuthReady: ready }),
+      setDemo: (isDemo) => set({ isDemo }),
       setBrand: (brand) => set({ currentBrand: brand }),
       addBrand: async (brand) => {
         const { userId } = get();
@@ -343,10 +348,19 @@ export const useStore = create<AppState>()(
       
       syncTokens: async () => {
         try {
-          const res = await fetch('/api/user/tokens');
+          const user = auth.currentUser;
+          if (!user) return;
+          const idToken = await user.getIdToken();
+          const res = await fetch('/api/user/tokens', {
+            headers: { 'Authorization': `Bearer ${idToken}` },
+          });
           if (res.ok) {
             const data = await res.json();
             set({ tokens: data.tokens });
+            useTokenStore.getState().setBalance(data.tokens);
+            if (data.tier) {
+              useTokenStore.getState().setTier(data.tier);
+            }
           }
         } catch (e) {
           console.error("Token sync failed", e);
@@ -362,7 +376,10 @@ export const useStore = create<AppState>()(
         }
       },
 
-      reset: () => set({ isAuthenticated: false, userId: null, currentBrand: null, brands: [], campaigns: [], videoJobs: [], agents: [], leads: [] })
+      reset: () => {
+        useTokenStore.getState().reset();
+        set({ isAuthenticated: false, userId: null, currentBrand: null, brands: [], campaigns: [], videoJobs: [], agents: [], leads: [] });
+      }
     }),
     {
       name: 'sacred-core-vault',

@@ -1,5 +1,4 @@
 
-import { GoogleGenAI } from "@google/genai";
 import { BrandDNA, DesignVariant, CopyVariant, AudienceFeedback } from "../types";
 import { universalAiService } from "./universalAiService";
 
@@ -14,7 +13,8 @@ export const generateDesignVariants = async (brand: BrandDNA): Promise<DesignVar
     const response = await universalAiService.generateText({
       prompt,
       responseMimeType: 'application/json',
-      featureId: 'design-simulator'
+      featureId: 'design-simulator',
+      tokenAction: 'PORTFOLIO_REPORT'
     });
 
     if (response === "FALLBACK_TRIGGERED") {
@@ -43,7 +43,8 @@ export const generateCopyVariants = async (brand: BrandDNA, originalText: string
     const response = await universalAiService.generateText({
       prompt,
       responseMimeType: 'application/json',
-      featureId: 'copy-simulator'
+      featureId: 'copy-simulator',
+      tokenAction: 'PORTFOLIO_REPORT'
     });
 
     if (response === "FALLBACK_TRIGGERED") {
@@ -75,7 +76,8 @@ export const simulateAudienceReaction = async (
     const response = await universalAiService.generateText({
       prompt,
       responseMimeType: 'application/json',
-      featureId: 'audience-simulator'
+      featureId: 'audience-simulator',
+      tokenAction: 'PORTFOLIO_REPORT'
     });
 
     if (response === "FALLBACK_TRIGGERED") {

@@ -60,7 +60,8 @@ export const generateAdvancedPRD = async (
     const text = await universalAiService.generateText({
       prompt,
       responseMimeType: 'application/json',
-      featureId: 'prd-generation'
+      featureId: 'prd-generation',
+      tokenAction: 'CAMPAIGN_GENERATION'
     });
 
     let raw;
@@ -128,6 +129,7 @@ export const generateAssetFromStory = async (brand: BrandDNA, story: UserStory):
     prompt,
     responseMimeType: 'application/json',
     featureId: 'asset-generation',
+    tokenAction: 'CAMPAIGN_GENERATION',
     responseSchema: {
       type: Type.OBJECT,
       properties: {
@@ -184,6 +186,7 @@ export const sonicChat = async (history: any[], message: string, brandContext?: 
   return await universalAiService.generateText({
     prompt: message,
     systemInstruction: brandContext ? `You are Sonic for ${brandContext.name}` : `You are Sonic`,
-    featureId: 'sonic-chat'
+    featureId: 'sonic-chat',
+    tokenAction: 'AGENT_MESSAGE'
   });
 };

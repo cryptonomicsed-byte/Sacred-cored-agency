@@ -18,7 +18,14 @@ import {
 const LoginPage = () => {
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
-  const { setAuth } = useStore();
+  const { setAuth, setAuthReady, setDemo } = useStore();
+
+  const handleGuest = () => {
+    setDemo(true);
+    setAuth('demo-user');
+    setAuthReady(true);
+    navigate('/');
+  };
 
   const handleGoogleLogin = async () => {
     setIsLoading(true);
@@ -137,6 +144,14 @@ const LoginPage = () => {
                   Request Magic Link
                 </button>
               </div>
+
+              <button
+                type="button"
+                onClick={handleGuest}
+                className="w-full mt-4 py-4 bg-gradient-to-r from-brand-primary/20 to-brand-accent/20 border border-brand-primary/30 hover:border-brand-primary/60 rounded-xl text-[10px] font-bold uppercase tracking-widest text-white transition-all"
+              >
+                Continue as Guest (Demo)
+              </button>
             </div>
 
             <div className="pt-12 text-center">

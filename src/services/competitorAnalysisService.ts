@@ -64,7 +64,8 @@ export const generateBattleReport = async (brandA: BrandDNA, brandB: BrandDNA): 
     const response = await universalAiService.generateText({
       prompt,
       responseMimeType: 'application/json',
-      featureId: 'battle-mode'
+      featureId: 'battle-mode',
+      tokenAction: 'PORTFOLIO_REPORT'
     });
 
     if (response === "FALLBACK_TRIGGERED") {

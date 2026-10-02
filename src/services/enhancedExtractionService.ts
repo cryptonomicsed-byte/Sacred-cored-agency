@@ -71,7 +71,7 @@ export const enhanceBrandExtraction = async (
   `;
 
   try {
-    const jsonString = await executeRLMAnalysis(prompt, onProgress);
+    const jsonString = await executeRLMAnalysis(prompt, onProgress, 'DNA_EXTRACTION');
     
     if (jsonString === "FALLBACK_TRIGGERED") {
       return {

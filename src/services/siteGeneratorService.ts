@@ -8,7 +8,8 @@ export const generateWebsiteStructure = async (brand: BrandDNA): Promise<Website
     const response = await universalAiService.generateText({
       prompt,
       responseMimeType: 'application/json',
-      featureId: 'site-builder'
+      featureId: 'site-builder',
+      tokenAction: 'WEBSITE_GENERATION'
     });
     
     let content: any = {};
